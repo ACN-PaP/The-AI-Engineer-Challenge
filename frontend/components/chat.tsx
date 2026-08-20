@@ -335,7 +335,7 @@ export function Chat() {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               rows={1}
-              placeholder="Ask about a coin, market, or concept…"
+              placeholder="Ask about a coin, market, or strategy…"
               aria-label="Message the Crypto Advisor"
               className="max-h-32 flex-1 resize-none bg-transparent py-1.5 text-[15px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground"
             />
