@@ -1,7 +1,8 @@
 'use client'
 
 import { ChatMessage } from '@/components/chat-message'
-import { PriceTicker } from '@/components/price-ticker'
+import { PriceChart } from '@/components/price-chart'
+import { COINS, CoinMeta, PriceTicker } from '@/components/price-ticker'
 import { TypingIndicator } from '@/components/typing-indicator'
 import { Button } from '@/components/ui/button'
 import { Bitcoin, ShieldAlert, SendHorizontal } from 'lucide-react'
@@ -116,6 +117,7 @@ export function Chat() {
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [followUps, setFollowUps] = useState<string[]>([])
+  const [selectedCoin, setSelectedCoin] = useState<CoinMeta>(COINS[0])
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -253,7 +255,10 @@ export function Chat() {
       </header>
 
       {/* Live price ticker */}
-      <PriceTicker />
+      <PriceTicker selectedCoinId={selectedCoin.id} onCoinSelect={setSelectedCoin} />
+
+      {/* Price chart */}
+      <PriceChart coinId={selectedCoin.id} symbol={selectedCoin.symbol} name={selectedCoin.name} />
 
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-6">
