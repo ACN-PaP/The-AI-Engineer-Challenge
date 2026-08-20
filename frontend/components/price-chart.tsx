@@ -164,14 +164,14 @@ export function PriceChart({ coinId, symbol, name }: PriceChartProps) {
               </defs>
               <XAxis
                 dataKey="time"
-                tick={{ fontSize: 9, fill: '#52525b' }}
+                tick={{ fontSize: 9, fill: '#9ca3af' }}
                 axisLine={false}
                 tickLine={false}
                 interval="preserveStartEnd"
                 tickCount={4}
               />
               <YAxis
-                tick={{ fontSize: 9, fill: '#52525b' }}
+                tick={{ fontSize: 9, fill: '#9ca3af' }}
                 axisLine={false}
                 tickLine={false}
                 width={52}
@@ -180,15 +180,16 @@ export function PriceChart({ coinId, symbol, name }: PriceChartProps) {
               />
               <Tooltip
                 contentStyle={{
-                  background: '#161616',
-                  border: '1px solid rgba(255,255,255,0.1)',
+                  background: '#ffffff',
+                  border: '1px solid rgba(0,0,0,0.1)',
                   borderRadius: 8,
                   fontSize: 12,
                   padding: '6px 10px',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
                 }}
-                labelStyle={{ color: '#71717a', marginBottom: 2 }}
+                labelStyle={{ color: '#737373', marginBottom: 2 }}
                 formatter={(v: number) => [formatPrice(v), symbol]}
-                cursor={{ stroke: 'rgba(161,0,255,0.4)', strokeWidth: 1 }}
+                cursor={{ stroke: 'rgba(161,0,255,0.3)', strokeWidth: 1 }}
               />
               <Area
                 type="monotone"

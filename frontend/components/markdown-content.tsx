@@ -11,7 +11,7 @@ export function MarkdownContent({ children }: { children: string }) {
         strong: ({ children }) => (
           <strong className="font-semibold text-foreground">{children}</strong>
         ),
-        em: ({ children }) => <em className="italic opacity-90">{children}</em>,
+        em: ({ children }) => <em className="italic opacity-80">{children}</em>,
         ul: ({ children }) => (
           <ul className="mb-2 ml-4 list-disc space-y-0.5 last:mb-0">{children}</ul>
         ),
@@ -26,12 +26,12 @@ export function MarkdownContent({ children }: { children: string }) {
           <h2 className="mb-1.5 mt-3 text-sm font-bold text-foreground first:mt-0">{children}</h2>
         ),
         h3: ({ children }) => (
-          <h3 className="mb-1 mt-2 text-sm font-semibold text-foreground/90 first:mt-0">
+          <h3 className="mb-1 mt-2 text-sm font-semibold text-foreground/80 first:mt-0">
             {children}
           </h3>
         ),
         pre: ({ children }) => (
-          <pre className="mb-2 overflow-x-auto rounded-lg bg-white/5 p-3 font-mono text-xs last:mb-0">
+          <pre className="mb-2 overflow-x-auto rounded-lg bg-black/[0.04] p-3 font-mono text-xs last:mb-0">
             {children}
           </pre>
         ),
@@ -40,24 +40,24 @@ export function MarkdownContent({ children }: { children: string }) {
             !!className ||
             (typeof children === 'string' && (children as string).includes('\n'))
           return isBlock ? (
-            <code className={cn('font-mono text-xs text-card-foreground', className)}>
+            <code className={cn('font-mono text-xs text-foreground', className)}>
               {children}
             </code>
           ) : (
-            <code className="rounded bg-white/10 px-1 py-0.5 font-mono text-[13px] text-primary">
+            <code className="rounded bg-primary/10 px-1 py-0.5 font-mono text-[13px] text-primary">
               {children}
             </code>
           )
         },
         blockquote: ({ children }) => (
-          <blockquote className="mb-2 border-l-2 border-primary/50 pl-3 italic text-muted-foreground last:mb-0">
+          <blockquote className="mb-2 border-l-2 border-primary/40 pl-3 italic text-muted-foreground last:mb-0">
             {children}
           </blockquote>
         ),
         a: ({ href, children }) => (
           <a
             href={href}
-            className="text-primary underline underline-offset-2 hover:text-primary/80"
+            className="text-primary underline underline-offset-2 hover:text-primary/70"
             target="_blank"
             rel="noopener noreferrer"
           >
@@ -71,7 +71,7 @@ export function MarkdownContent({ children }: { children: string }) {
           </div>
         ),
         th: ({ children }) => (
-          <th className="border border-border bg-white/5 px-2 py-1 text-left font-semibold">
+          <th className="border border-border bg-black/[0.04] px-2 py-1 text-left font-semibold">
             {children}
           </th>
         ),
