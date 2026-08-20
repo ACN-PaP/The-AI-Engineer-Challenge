@@ -3,8 +3,11 @@
 import { ChatMessage } from '@/components/chat-message'
 import { PriceChart } from '@/components/price-chart'
 import { COINS, CoinMeta, PriceTicker } from '@/components/price-ticker'
+import { TopicsPanel } from '@/components/topics-panel'
 import { TypingIndicator } from '@/components/typing-indicator'
 import { Button } from '@/components/ui/button'
+import { Watchlist } from '@/components/watchlist'
+import { TOPIC_CATEGORIES } from '@/lib/topics'
 import { Bitcoin, ShieldAlert, SendHorizontal } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
@@ -24,82 +27,7 @@ const INITIAL_SUGGESTIONS = [
 function getFollowUpSuggestions(response: string): string[] {
   const lower = response.toLowerCase()
 
-  const topics: Array<{ keywords: string[]; questions: string[] }> = [
-    {
-      keywords: ['bitcoin', 'btc'],
-      questions: [
-        "What drives Bitcoin's price?",
-        'How does Bitcoin mining work?',
-        'Is Bitcoin good for long-term holding?',
-      ],
-    },
-    {
-      keywords: ['ethereum', 'eth', 'ether'],
-      questions: [
-        'How do Ethereum gas fees work?',
-        'What is ETH staking and how does it earn yield?',
-        'What are the top Ethereum dApps right now?',
-      ],
-    },
-    {
-      keywords: ['staking', 'stake', 'yield', 'validator'],
-      questions: [
-        'Which coins have the best staking rewards?',
-        'What are the risks of staking?',
-        'How do I start staking as a beginner?',
-      ],
-    },
-    {
-      keywords: ['defi', 'decentralized finance', 'liquidity', 'amm', 'dex'],
-      questions: [
-        'What are the biggest risks in DeFi?',
-        'How does yield farming work?',
-        'What are the most trusted DeFi protocols?',
-      ],
-    },
-    {
-      keywords: ['nft', 'non-fungible'],
-      questions: [
-        'How do NFTs derive their value?',
-        'What are the best NFT marketplaces?',
-        'Are NFTs still a good investment?',
-      ],
-    },
-    {
-      keywords: ['altcoin', 'solana', 'sol', 'bnb', 'ada', 'cardano', 'xrp'],
-      questions: [
-        'How do I research altcoins safely?',
-        'What makes a promising altcoin?',
-        'How does market cap affect altcoin risk?',
-      ],
-    },
-    {
-      keywords: ['risk', 'volatile', 'volatility', 'safe', 'invest', 'portfolio'],
-      questions: [
-        'How can I reduce my crypto risk exposure?',
-        'What is dollar-cost averaging in crypto?',
-        'What percentage of a portfolio should be in crypto?',
-      ],
-    },
-    {
-      keywords: ['blockchain', 'technology', 'consensus', 'smart contract', 'layer'],
-      questions: [
-        'What is proof of work vs proof of stake?',
-        'How does a blockchain transaction get confirmed?',
-        'What is a smart contract and how does it work?',
-      ],
-    },
-    {
-      keywords: ['wallet', 'cold', 'hot', 'hardware', 'seed phrase', 'private key'],
-      questions: [
-        'What is the safest way to store crypto?',
-        'What happens if I lose my seed phrase?',
-        'What are the best hardware wallets?',
-      ],
-    },
-  ]
-
-  for (const topic of topics) {
+  for (const topic of TOPIC_CATEGORIES) {
     if (topic.keywords.some((kw) => lower.includes(kw))) {
       return topic.questions
     }
@@ -236,7 +164,13 @@ export function Chat() {
   }
 
   return (
-    <div className="mx-auto flex h-dvh w-full max-w-3xl flex-col">
+    <div className="mx-auto flex h-dvh w-full max-w-[1440px]">
+      {/* Quick topics sidebar */}
+      <aside className="hidden shrink-0 border-r border-border lg:flex lg:w-64">
+        <TopicsPanel onSelect={sendMessage} />
+      </aside>
+
+      <div className="mx-auto flex h-dvh w-full max-w-3xl flex-1 flex-col">
       {/* Header */}
       <header className="flex items-center gap-3 border-b border-border bg-background/80 px-5 py-4 backdrop-blur-sm">
         <div className="flex size-10 items-center justify-center rounded-lg bg-linear-to-br from-[#a100ff] to-[#4318ff] text-primary-foreground shadow-[0_0_18px_rgba(161,0,255,0.55)]">
@@ -355,6 +289,12 @@ export function Chat() {
           Not financial advice. Do your own research before investing.
         </p>
       </div>
+      </div>
+
+      {/* Watchlist sidebar */}
+      <aside className="hidden shrink-0 border-l border-border lg:flex lg:w-72">
+        <Watchlist selectedCoinId={selectedCoin.id} onCoinSelect={setSelectedCoin} />
+      </aside>
     </div>
   )
 }
