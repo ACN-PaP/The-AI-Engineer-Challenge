@@ -1,15 +1,27 @@
+import json
+import logging
+import os
+from urllib.request import Request, urlopen
+from xml.etree import ElementTree
+
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
-from openai import OpenAI
-from urllib.request import urlopen, Request
-from xml.etree import ElementTree
-import os
-import json
-from dotenv import load_dotenv
 
 load_dotenv()
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("crypto_advisor")
+
+try:
+    from api.models import ChatRequest
+    from api.services.conversation import trim_history
+    from api.services.crypto_agent import run_agent_once, run_agent_stream
+except ImportError:  # pragma: no cover - exercised only under Vercel's import layout
+    from models import ChatRequest
+    from services.conversation import trim_history
+    from services.crypto_agent import run_agent_once, run_agent_stream
 
 app = FastAPI()
 
@@ -20,24 +32,14 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-SYSTEM_PROMPT = (
-    "You are a knowledgeable and cautious cryptocurrency advisor. "
-    "Help users understand crypto markets, blockchain technology, coins, tokens, and investment concepts. "
-    "Always include a disclaimer that this is not financial advice and users should do their own research (DYOR) before making investment decisions. "
-    "Be clear, balanced, and avoid hype — present risks alongside opportunities. "
-    "Use markdown formatting: bullet points for lists, **bold** for key terms, and headers when the answer is long."
-)
-
-class ChatRequest(BaseModel):
-    message: str
 
 @app.get("/")
 def root():
     return {"status": "ok"}
 
+
 NEWS_FEED_URL = "https://cointelegraph.com/rss"
+
 
 @app.get("/api/news")
 def news():
@@ -60,49 +62,58 @@ def news():
                 })
         return {"items": items}
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Error fetching news: {str(e)}")
+        logger.warning("Failed to fetch news feed: %s", e)
+        raise HTTPException(status_code=502, detail="Unable to fetch news right now.")
+
 
 @app.post("/api/chat")
 def chat(request: ChatRequest):
     if not os.getenv("OPENAI_API_KEY"):
         raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured")
-    try:
-        response = client.chat.completions.create(
-            model="gpt-5",
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": request.message}
-            ]
-        )
-        return {"reply": response.choices[0].message.content}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error calling OpenAI API: {str(e)}")
 
-def _stream_tokens(message: str):
+    history = trim_history(request.messages)
+    result = run_agent_once(history, request.selected_coin_id, request.currency)
+
+    if "error" in result:
+        logger.warning("Chat request failed: %s", result["error"])
+        raise HTTPException(status_code=502, detail=result["error"]["message"])
+
+    return {"reply": result["reply"], "citations": result["citations"]}
+
+
+def _stream_events(request: ChatRequest):
+    history = trim_history(request.messages)
     try:
-        response = client.chat.completions.create(
-            model="gpt-5",
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": message}
-            ],
-            stream=True,
+        for event_type, payload in run_agent_stream(history, request.selected_coin_id, request.currency):
+            if event_type == "token":
+                yield f"data: {json.dumps({'type': 'token', 'token': payload})}\n\n"
+            elif event_type == "citations":
+                yield f"data: {json.dumps({'type': 'citations', 'citations': payload})}\n\n"
+            elif event_type == "error":
+                logger.warning("Agent stream error: %s", payload)
+                yield f"data: {json.dumps({'type': 'error', 'error': payload})}\n\n"
+                return
+            elif event_type == "done":
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                return
+    except Exception:
+        logger.exception("Unhandled error while streaming chat response")
+        yield (
+            "data: "
+            + json.dumps({
+                "type": "error",
+                "error": {"code": "internal_error", "message": "Something went wrong. Please try again."},
+            })
+            + "\n\n"
         )
-        for chunk in response:
-            token = chunk.choices[0].delta.content
-            if token:
-                yield f"data: {json.dumps({'token': token})}\n\n"
-        yield "data: [DONE]\n\n"
-    except Exception as e:
-        yield f"data: {json.dumps({'error': str(e)})}\n\n"
-        yield "data: [DONE]\n\n"
+
 
 @app.post("/api/chat/stream")
 def chat_stream(request: ChatRequest):
     if not os.getenv("OPENAI_API_KEY"):
         raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured")
     return StreamingResponse(
-        _stream_tokens(request.message),
+        _stream_events(request),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

@@ -1,6 +1,9 @@
-# OpenAI Chat API Backend
+# Crypto Advisor API Backend
 
-This is a FastAPI-based backend service that provides a chat interface using OpenAI's API. The service acts as a supportive mental coach, helping users with stress, motivation, habits, and confidence.
+A FastAPI backend that powers the Crypto Advisor chat app. It streams answers from
+OpenAI, grounds any live-market claim in real CoinGecko data via tool calling, and
+returns server-built citations so the frontend never has to trust anything the model
+says about current prices.
 
 ## Prerequisites
 
@@ -12,111 +15,155 @@ This is a FastAPI-based backend service that provides a chat interface using Ope
 
 All commands below assume you are running them from the repository root.
 
-1. Install dependencies into a local virtual environment managed by `uv`:
-
 ```bash
 uv sync
 ```
 
-2. (Optional) Activate the virtual environment if you prefer to run commands manually:
+`uv` creates `.venv/` automatically on first sync (and downloads Python 3.12 if needed).
+
+## Environment variables
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `OPENAI_API_KEY` | Yes | — | Used by the OpenAI SDK. Never sent to the frontend. |
+| `OPENAI_MODEL` | No | `gpt-5` | Model used for both `/api/chat` and `/api/chat/stream`. Change this without touching code. |
 
 ```bash
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
+export OPENAI_API_KEY=sk-your-key-here
+export OPENAI_MODEL=gpt-5   # optional override
 ```
 
-`uv` will create the `.venv` directory automatically on first sync and download Python 3.12 if it's not already available.
-
-## Running the Server
-
-Start the FastAPI app with the dependencies managed by `uv`:
+## Running the server
 
 ```bash
 uv run uvicorn api.index:app --reload
 ```
 
-This runs the app with `uvicorn` on `http://localhost:8000` with auto-reload enabled for development. The server will automatically restart when you make changes to the code.
-
-**Note:** Make sure the `OPENAI_API_KEY` environment variable is set in your shell before launching the server. You can set it with:
-
-```bash
-export OPENAI_API_KEY=sk-your-key-here
-```
-
-If you encounter an "Address already in use" error, you may need to kill existing processes on port 8000:
+Runs on `http://localhost:8000` with auto-reload. If port 8000 is already in use:
 
 ```bash
 lsof -ti:8000 | xargs kill -9
 ```
 
-## API Endpoints
+## Architecture
 
-### Chat Endpoint
-- **URL**: `/api/chat`
-- **Method**: POST
-- **Request Body**:
+- `api/index.py` — FastAPI app and routes only; delegates to the services below.
+- `api/models.py` — request/response validation (Pydantic).
+- `api/services/market_data.py` — CoinGecko client. All requests happen server-side,
+  with a timeout, a short-lived cache, and a `MarketDataError` on any failure (timeout,
+  HTTP error, bad payload). The frontend's displayed prices (ticker/chart) are never
+  trusted or reused here — every tool call fetches fresh, independently verified data.
+- `api/services/conversation.py` — trims incoming history to the last 20 messages /
+  16,000 characters before it's sent to OpenAI. History is entirely client-managed
+  (sent fresh on every request); nothing is kept in process memory, so this is safe to
+  run on stateless/serverless infrastructure (e.g. Vercel).
+- `api/services/crypto_agent.py` — orchestrates OpenAI's Responses API with tool
+  calling. A single streamed call either answers directly (general questions — no
+  wasted round-trip) or requests a tool; on a tool call, the backend executes it,
+  continues the *same* response via `previous_response_id`, and streams the grounded
+  final answer. Citations are built only from tool calls that actually succeeded — the
+  model can never supply its own source URL.
+
+## API endpoints
+
+### `POST /api/chat/stream` — streaming chat (SSE)
+
+**Request body:**
+
 ```json
 {
-    "message": "string"
+  "messages": [
+    { "role": "user", "content": "Tell me about Ethereum staking." },
+    { "role": "assistant", "content": "Ethereum staking means..." },
+    { "role": "user", "content": "What are its main risks?" }
+  ],
+  "selected_coin_id": "ethereum",
+  "currency": "usd"
 }
 ```
-- **Response**: JSON object with the AI's reply:
+
+- `messages` — required, 1–50 items. `role` must be `user` or `assistant`. User
+  message content is capped at 4,000 characters; assistant content (replayed history)
+  is capped at 8,000 characters, since it's our own generated text rather than
+  free-form user input.
+- `selected_coin_id` — optional. The coin currently selected in the app's watchlist/
+  chart. Lets the model resolve "this coin" / "it" without the user naming it again.
+- `currency` — `"usd"` (default) or `"thb"`. Only `usd` is exercised by the UI today;
+  `thb` is already wired through the tools and CoinGecko support, ready for a future
+  currency switcher.
+
+**Response:** `text/event-stream`. Each line is `data: <json>\n\n` with one of:
+
+```text
+{"type": "token", "token": "Bitcoin is currently..."}
+{"type": "citations", "citations": [{"id": "...", "title": "...", "source": "CoinGecko", "url": "...", "retrievedAt": "2026-08-21T04:11:43.69Z"}]}
+{"type": "error", "error": {"code": "market_data_unavailable", "message": "..."}}
+{"type": "done"}
+```
+
+- `token` events stream the answer incrementally.
+- `citations` (0 or 1 per response) is only sent when at least one tool call
+  succeeded — never sent, and never fabricated, if market data was unavailable.
+- `error` carries a safe, user-facing message; raw OpenAI/CoinGecko exceptions are
+  logged server-side and never forwarded to the client. Error codes: `llm_unavailable`,
+  `stream_interrupted`, `empty_response`, `tool_loop_limit`, `internal_error`.
+- `done` marks a normal, complete end of stream. The frontend treats a stream that
+  ends *without* a `done` event as an interrupted, retryable error rather than a
+  finished answer.
+
+### `POST /api/chat` — non-streaming variant
+
+Same request body as above. Shares the exact same agent logic as the streaming
+endpoint (`run_agent_once` wraps `run_agent_stream`). Returns:
+
 ```json
-{
-    "reply": "string"
-}
+{ "reply": "string", "citations": [ { "...": "..." } ] }
 ```
 
-The chat endpoint uses OpenAI's GPT-5 model with a supportive mental coach system prompt to provide helpful responses.
+### `GET /api/news`
 
-### Root Endpoint
-- **URL**: `/`
-- **Method**: GET
-- **Response**: `{"status": "ok"}`
+Unchanged — returns the latest Cointelegraph RSS headlines. See
+[`frontend/components/news-panel.tsx`](../frontend/components/news-panel.tsx).
 
-### Health Check
-- **URL**: `/api/health`
-- **Method**: GET
-- **Response**: `{"status": "ok"}`
+### `GET /`
 
-## API Documentation
+Health check: `{"status": "ok"}`.
 
-Once the server is running, you can access the interactive API documentation at:
-- Swagger UI: `http://localhost:8000/docs`
-- ReDoc: `http://localhost:8000/redoc`
+## Manual test steps
 
-## CORS Configuration
+1. Start the backend (`uv run uvicorn api.index:app --reload`) and the frontend
+   (`cd frontend && npm run dev`), pointing `frontend/.env.development.local` at
+   `http://localhost:8000`.
+2. **Live market data:** ask "What is the current Bitcoin price and how much has it
+   moved today?" — expect a real price/24h change, a retrieval timestamp, and a
+   clickable CoinGecko source card under the answer.
+3. **Selected-coin context:** select Ethereum in the watchlist, ask "Is this coin up
+   today?" — expect the answer to resolve "this coin" to Ethereum without you naming it.
+4. **Conversation memory:** ask "Compare Bitcoin and Ethereum," then ask "Which one had
+   the larger 24-hour move?" — expect the second answer to understand "which one" from
+   history and re-cite fresh data.
+5. **General question:** ask "How does proof of stake work?" — expect a normal answer
+   with no CoinGecko tool call and no Sources section.
+6. **Data-provider failure:** temporarily break connectivity to
+   `api.coingecko.com` (or monkeypatch `market_data.httpx.get` to raise, as the
+   automated tests do) and ask a price question — expect the assistant to say current
+   data is unavailable, with no fabricated number and no citation.
+7. **New chat:** click "New chat" — expect messages, follow-ups, and citations to reset.
+8. **Retry:** if a request fails or is interrupted, expect a "Retry" action on that
+   message that resends the same conversation without duplicating the user's turn.
 
-The API is configured to accept requests from any origin (`*`). This can be modified in the `index.py` file if you need to restrict access to specific domains.
-
-## Error Handling
-
-The API includes basic error handling for:
-- Invalid API keys
-- OpenAI API errors
-- General server errors
-
-All errors will return a 500 status code with an error message.
-
-## Testing the API
-
-Once your server is running, you can test the chat endpoint using curl:
+## Automated tests
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Hello"}'
+uv run pytest api/tests/ -v
 ```
 
-You should receive a JSON response with the AI's reply:
+Covers: request validation (roles, length caps, coin-id/currency validation),
+history trimming, CoinGecko client caching/timeout/error handling, citation
+construction (including "no citation on failure"), and the full tool-calling loop
+against a fake OpenAI client (no real API calls).
 
-```json
-{
-  "reply": "Hi! It's good to hear from you. What's on your mind today?..."
-}
-```
+## CORS
 
-You can also test the health check endpoint:
-
-```bash
-curl http://127.0.0.1:8000/api/health
-```
+The API accepts requests from any origin (`*`) — adjust in `api/index.py` if you need
+to restrict it.

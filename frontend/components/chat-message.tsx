@@ -1,6 +1,8 @@
+import { Citations } from '@/components/citations'
 import { MarkdownContent } from '@/components/markdown-content'
 import { cn } from '@/lib/utils'
-import { Bitcoin, User } from 'lucide-react'
+import type { Citation } from '@/lib/types'
+import { Bitcoin, RotateCcw, User } from 'lucide-react'
 import type { ReactNode } from 'react'
 
 export type ChatRole = 'user' | 'assistant'
@@ -10,9 +12,18 @@ interface ChatMessageProps {
   content?: string
   children?: ReactNode
   tone?: 'default' | 'error'
+  citations?: Citation[]
+  onRetry?: () => void
 }
 
-export function ChatMessage({ role, content, children, tone = 'default' }: ChatMessageProps) {
+export function ChatMessage({
+  role,
+  content,
+  children,
+  tone = 'default',
+  citations,
+  onRetry,
+}: ChatMessageProps) {
   const isUser = role === 'user'
 
   return (
@@ -49,6 +60,19 @@ export function ChatMessage({ role, content, children, tone = 'default' }: ChatM
           )
         ) : (
           <div className="whitespace-pre-wrap text-pretty">{children}</div>
+        )}
+
+        {!isUser && citations && citations.length > 0 && <Citations citations={citations} />}
+
+        {tone === 'error' && onRetry && (
+          <button
+            type="button"
+            onClick={onRetry}
+            className="mt-2 flex items-center gap-1.5 rounded-full bg-red-100 px-3 py-1 text-xs font-medium text-red-700 transition-colors hover:bg-red-200"
+          >
+            <RotateCcw className="size-3" />
+            Retry
+          </button>
         )}
       </div>
 

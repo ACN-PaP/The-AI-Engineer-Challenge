@@ -8,22 +8,29 @@ import { TopicsPanel } from '@/components/topics-panel'
 import { TypingIndicator } from '@/components/typing-indicator'
 import { Button } from '@/components/ui/button'
 import { Watchlist } from '@/components/watchlist'
+import { extractSSEPayloads, parseSSEEvent } from '@/lib/sse'
 import { TOPIC_CATEGORIES } from '@/lib/topics'
-import { Bitcoin, ShieldAlert, SendHorizontal } from 'lucide-react'
+import type { Citation, Message, StreamError } from '@/lib/types'
+import { Bitcoin, MessageSquarePlus, ShieldAlert, SendHorizontal } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
-interface Message {
-  id: string
-  role: 'user' | 'assistant'
-  content: string
-  isError?: boolean
-}
+/** Client-side mirror of the backend's history window (api/services/conversation.py) — keeps
+ * the request payload small; the backend independently enforces its own limit either way. */
+const MAX_CLIENT_HISTORY_MESSAGES = 20
 
 const INITIAL_SUGGESTIONS = [
   'What is the difference between Bitcoin and Ethereum?',
   'How does staking work?',
   'Explain the risks of investing in altcoins',
 ]
+
+class ChatStreamError extends Error {
+  code: string
+  constructor(error: StreamError) {
+    super(error.message)
+    this.code = error.code
+  }
+}
 
 function getFollowUpSuggestions(response: string): string[] {
   const lower = response.toLowerCase()
@@ -55,100 +62,141 @@ export function Chat() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
   }, [messages, isLoading])
 
-  async function sendMessage(text: string) {
-    const trimmed = text.trim()
-    if (!trimmed || isLoading) return
-
-    const userMsg: Message = { id: crypto.randomUUID(), role: 'user', content: trimmed }
-    setMessages((prev) => [...prev, userMsg])
-    setInput('')
+  async function runAssistantTurn(historyMessages: Message[]) {
     setIsLoading(true)
     setFollowUps([])
 
     const assistantId = crypto.randomUUID()
+    let fullContent = ''
+    let firstToken = true
+    let receivedDone = false
 
     try {
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? ''}/api/chat/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: trimmed }),
+        body: JSON.stringify({
+          messages: historyMessages.slice(-MAX_CLIENT_HISTORY_MESSAGES).map((m) => ({
+            role: m.role,
+            content: m.content,
+          })),
+          selected_coin_id: selectedCoin.id,
+          currency: 'usd',
+        }),
       })
 
-      if (!res.ok) throw new Error(`Request failed with status ${res.status}`)
+      if (!res.ok || !res.body) throw new Error(`Request failed with status ${res.status}`)
 
-      const reader = res.body?.getReader()
+      const reader = res.body.getReader()
       const decoder = new TextDecoder()
-      let fullContent = ''
       let buffer = ''
-      let firstToken = true
 
-      while (reader) {
+      while (true) {
         const { done, value } = await reader.read()
         if (done) break
 
         buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() ?? ''
+        const { payloads, remainder } = extractSSEPayloads(buffer)
+        buffer = remainder
 
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          const raw = line.slice(6).trim()
-          if (raw === '[DONE]') break
-          try {
-            const parsed = JSON.parse(raw)
-            if (parsed.error) throw new Error(parsed.error)
-            if (parsed.token) {
-              fullContent += parsed.token
-              if (firstToken) {
-                setMessages((prev) => [
-                  ...prev,
-                  { id: assistantId, role: 'assistant', content: fullContent },
-                ])
-                setIsLoading(false)
-                firstToken = false
-              } else {
-                setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === assistantId ? { ...m, content: fullContent } : m,
-                  ),
-                )
-              }
+        for (const payload of payloads) {
+          const event = parseSSEEvent(payload)
+          if (!event) continue
+
+          if (event.type === 'token' && event.token) {
+            fullContent += event.token
+            if (firstToken) {
+              firstToken = false
+              setIsLoading(false)
+              setMessages((prev) => [
+                ...prev,
+                { id: assistantId, role: 'assistant', content: fullContent },
+              ])
+            } else {
+              setMessages((prev) =>
+                prev.map((m) => (m.id === assistantId ? { ...m, content: fullContent } : m)),
+              )
             }
-          } catch {
-            // ignore malformed SSE lines
+          } else if (event.type === 'citations') {
+            // Keep the already-streamed message intact even if citations are malformed.
+            try {
+              const citations: Citation[] = event.citations ?? []
+              setMessages((prev) =>
+                prev.map((m) => (m.id === assistantId ? { ...m, citations } : m)),
+              )
+            } catch (citationError) {
+              console.log('[chat] failed to attach citations:', citationError)
+            }
+          } else if (event.type === 'error') {
+            throw new ChatStreamError(
+              event.error ?? { code: 'unknown_error', message: 'Something went wrong. Please try again.' },
+            )
+          } else if (event.type === 'done') {
+            receivedDone = true
           }
         }
       }
 
-      if (firstToken) {
-        // stream ended with no tokens (empty response)
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: assistantId,
-            role: 'assistant',
-            content: "I didn't quite catch that. Could you rephrase your question about crypto?",
-          },
-        ])
+      if (!receivedDone) {
+        throw new ChatStreamError({
+          code: 'stream_interrupted',
+          message: 'The response was interrupted before it finished. Please try again.',
+        })
       }
 
       setFollowUps(getFollowUpSuggestions(fullContent))
     } catch (error) {
       console.log('[chat] request failed:', error)
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: 'assistant',
-          isError: true,
-          content:
-            "I'm having trouble reaching the advisor right now. Please check your connection and try again in a moment.",
-        },
-      ])
+      const safeMessage =
+        error instanceof ChatStreamError
+          ? error.message
+          : "I'm having trouble reaching the advisor right now. Please check your connection and try again in a moment."
+
+      if (!firstToken) {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === assistantId ? { ...m, isError: true } : m)),
+        )
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          { id: assistantId, role: 'assistant', isError: true, content: safeMessage },
+        ])
+      }
     } finally {
       setIsLoading(false)
       textareaRef.current?.focus()
     }
+  }
+
+  async function sendMessage(text: string) {
+    const trimmed = text.trim()
+    if (!trimmed || isLoading) return
+
+    const userMsg: Message = { id: crypto.randomUUID(), role: 'user', content: trimmed }
+    const nextMessages = [...messages, userMsg]
+    setMessages(nextMessages)
+    setInput('')
+    await runAssistantTurn(nextMessages)
+  }
+
+  async function retryLastTurn() {
+    if (isLoading) return
+    const historyWithoutFailedReply = [...messages]
+    while (
+      historyWithoutFailedReply.length > 0 &&
+      historyWithoutFailedReply[historyWithoutFailedReply.length - 1].role === 'assistant'
+    ) {
+      historyWithoutFailedReply.pop()
+    }
+    setMessages(historyWithoutFailedReply)
+    await runAssistantTurn(historyWithoutFailedReply)
+  }
+
+  function handleNewChat() {
+    setMessages([])
+    setFollowUps([])
+    setInput('')
+    setIsLoading(false)
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -183,9 +231,21 @@ export function Chat() {
           </h1>
           <p className="truncate text-sm text-muted-foreground">AI cryptocurrency assistant</p>
         </div>
-        <div className="ml-auto flex items-center gap-1.5 rounded-full bg-secondary px-3 py-1 text-xs font-medium text-secondary-foreground">
-          <span className="size-2 rounded-full bg-primary" aria-hidden="true" />
-          Online
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleNewChat}
+            disabled={messages.length === 0 && !isLoading}
+            className="flex items-center gap-1.5 rounded-full bg-secondary px-3 py-1 text-xs font-medium text-secondary-foreground transition-colors hover:bg-secondary/70 disabled:cursor-not-allowed disabled:opacity-50"
+            aria-label="Start a new chat"
+          >
+            <MessageSquarePlus className="size-3.5" />
+            New chat
+          </button>
+          <div className="flex items-center gap-1.5 rounded-full bg-secondary px-3 py-1 text-xs font-medium text-secondary-foreground">
+            <span className="size-2 rounded-full bg-primary" aria-hidden="true" />
+            Online
+          </div>
         </div>
       </header>
 
@@ -226,12 +286,14 @@ export function Chat() {
           </div>
         ) : (
           <div className="flex flex-col gap-4">
-            {messages.map((m) => (
+            {messages.map((m, index) => (
               <ChatMessage
                 key={m.id}
                 role={m.role}
                 content={m.content}
                 tone={m.isError ? 'error' : 'default'}
+                citations={m.citations}
+                onRetry={m.isError && index === messages.length - 1 ? retryLastTurn : undefined}
               />
             ))}
 
