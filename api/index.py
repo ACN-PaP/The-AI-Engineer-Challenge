@@ -3,6 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from openai import OpenAI
+from urllib.request import urlopen, Request
+from xml.etree import ElementTree
 import os
 import json
 from dotenv import load_dotenv
@@ -34,6 +36,31 @@ class ChatRequest(BaseModel):
 @app.get("/")
 def root():
     return {"status": "ok"}
+
+NEWS_FEED_URL = "https://cointelegraph.com/rss"
+
+@app.get("/api/news")
+def news():
+    try:
+        req = Request(NEWS_FEED_URL, headers={"User-Agent": "Mozilla/5.0"})
+        with urlopen(req, timeout=5) as res:
+            feed = ElementTree.fromstring(res.read())
+
+        items = []
+        for item in feed.findall("./channel/item")[:12]:
+            title = (item.findtext("title") or "").strip()
+            link = (item.findtext("link") or "").strip()
+            pub_date = (item.findtext("pubDate") or "").strip()
+            if title and link:
+                items.append({
+                    "title": title,
+                    "link": link,
+                    "source": "Cointelegraph",
+                    "pubDate": pub_date,
+                })
+        return {"items": items}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Error fetching news: {str(e)}")
 
 @app.post("/api/chat")
 def chat(request: ChatRequest):

@@ -1,6 +1,7 @@
 'use client'
 
 import { ChatMessage } from '@/components/chat-message'
+import { NewsPanel } from '@/components/news-panel'
 import { PriceChart } from '@/components/price-chart'
 import { COINS, CoinMeta, PriceTicker } from '@/components/price-ticker'
 import { TopicsPanel } from '@/components/topics-panel'
@@ -165,9 +166,9 @@ export function Chat() {
 
   return (
     <div className="mx-auto flex h-dvh w-full max-w-[1440px]">
-      {/* Quick topics sidebar */}
+      {/* Crypto news sidebar */}
       <aside className="hidden shrink-0 border-r border-border lg:flex lg:w-64">
-        <TopicsPanel onSelect={sendMessage} />
+        <NewsPanel />
       </aside>
 
       <div className="mx-auto flex h-dvh w-full max-w-3xl flex-1 flex-col">
@@ -291,9 +292,14 @@ export function Chat() {
       </div>
       </div>
 
-      {/* Watchlist sidebar */}
-      <aside className="hidden shrink-0 border-l border-border lg:flex lg:w-72">
-        <Watchlist selectedCoinId={selectedCoin.id} onCoinSelect={setSelectedCoin} />
+      {/* Watchlist + quick topics sidebar */}
+      <aside className="hidden shrink-0 flex-col border-l border-border lg:flex lg:w-72">
+        <div className="border-b border-border">
+          <Watchlist selectedCoinId={selectedCoin.id} onCoinSelect={setSelectedCoin} />
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          <TopicsPanel onSelect={sendMessage} />
+        </div>
       </aside>
     </div>
   )
